@@ -1,8 +1,7 @@
-const express = require('express');
-const cors    = require('cors');
-const { exec } = require('child_process');
-const fetch   = require('node-fetch');
-const ytsr    = require('ytsr');
+const express   = require('express');
+const cors      = require('cors');
+const { exec }  = require('child_process');
+const YoutubeSearchApi = require('youtube-search-api');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -22,17 +21,16 @@ app.get('/search', async (req, res) => {
   if (!q) return res.status(400).json({ error: 'Query required' });
 
   try {
-    const results = await ytsr(q, { limit: 15 });
-    const songs   = results.items
-      .filter(i => i.type === 'video' && i.duration)
-      .slice(0, 12)
+    const results = await YoutubeSearchApi.GetListByKeyword(q, false, 12);
+    const songs   = (results.items || [])
+      .filter(i => i.type === 'video' && i.length)
       .map(i => ({
         id:        i.id,
         title:     i.title,
-        artist:    i.author?.name ?? 'Unknown',
-        duration:  i.duration,
-        thumbnail: i.bestThumbnail?.url ?? '',
-        url:       i.url,
+        artist:    i.channelTitle ?? 'Unknown',
+        duration:  i.length?.simpleText ?? '',
+        thumbnail: i.thumbnail?.thumbnails?.slice(-1)[0]?.url ?? '',
+        url:       `https://www.youtube.com/watch?v=${i.id}`,
       }));
 
     res.json({ songs });
@@ -47,13 +45,10 @@ app.get('/stream', (req, res) => {
   const url = req.query.url;
   if (!url) return res.status(400).json({ error: 'URL required' });
 
-  // yt-dlp: get best audio url (no download — just URL)
   const cmd = `yt-dlp -f bestaudio --get-url "${url}"`;
 
   exec(cmd, { timeout: 30000 }, (err, stdout, stderr) => {
-    if (err) {
-      return res.status(500).json({ error: 'Stream failed', detail: stderr });
-    }
+    if (err) return res.status(500).json({ error: 'Stream failed', detail: stderr });
     const streamUrl = stdout.trim().split('\n')[0];
     res.json({ streamUrl });
   });
@@ -85,13 +80,12 @@ app.get('/info', (req, res) => {
   });
 });
 
-// ── Download MP3 ───────────────────────────────────────────
+// ── Get download URL ───────────────────────────────────────
 // GET /download?url=https://youtu.be/xxx
 app.get('/download', (req, res) => {
   const url = req.query.url;
   if (!url) return res.status(400).json({ error: 'URL required' });
 
-  // Get direct audio download URL
   const cmd = `yt-dlp -f bestaudio --get-url "${url}"`;
 
   exec(cmd, { timeout: 30000 }, (err, stdout) => {
